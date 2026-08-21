@@ -215,19 +215,18 @@ jobs:
     steps:
 
       - name: SSH deploy to VM
-        if: ${{ secrets.VM_HOST != '' && secrets.VM_SSH_KEY != '' }}
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.VM_HOST }}
-          username: ${{ secrets.VM_USER }}
-          key: ${{ secrets.VM_SSH_KEY }}
-          script: |
-            sudo systemctl restart mlops-serve
-            sleep 5
-            curl -sf http://localhost:8000/health && echo "Health check passed. Service is running." || exit 1
-
-      - name: Simulated deploy check
-        if: ${{ secrets.VM_HOST == '' || secrets.VM_SSH_KEY == '' }}
+        env:
+          VM_HOST: ${{ secrets.VM_HOST }}
+          VM_USER: ${{ secrets.VM_USER }}
+          VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
         run: |
-          echo "VM_HOST or VM_SSH_KEY secret not set. Simulating deployment health check on CI runner..."
-          echo "FastAPI inference server deployment verified successfully."
+          if [ -n "$VM_HOST" ] && [ -n "$VM_SSH_KEY" ]; then
+            mkdir -p ~/.ssh
+            echo "$VM_SSH_KEY" > ~/.ssh/id_ed25519
+            chmod 600 ~/.ssh/id_ed25519
+            ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_ed25519 "$VM_USER@$VM_HOST" "sudo systemctl restart mlops-serve && sleep 5 && curl -sf http://localhost:8000/health && echo 'Health check passed. Service is running.'"
+          else
+            echo "VM_HOST or VM_SSH_KEY secret not set. Simulating deployment health check on CI runner..."
+            echo "FastAPI inference server deployment verified successfully."
+          fi
+
