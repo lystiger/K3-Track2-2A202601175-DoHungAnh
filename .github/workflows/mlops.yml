@@ -153,7 +153,7 @@ jobs:
           python-version: "3.10"
 
       - name: Install dependencies
-        run: pip install google-cloud-storage setuptools<70
+        run: pip install google-cloud-storage "setuptools<70"
 
       - name: Authenticate to Cloud Storage
         run: |
