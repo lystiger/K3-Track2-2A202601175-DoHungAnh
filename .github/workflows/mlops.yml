@@ -13,9 +13,9 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # JOB 1 - UNIT TEST
-  # Chay unit tests tren du lieu ao (khong can ket noi cloud storage).
-  # Neu co bat ky test nao that bai, pipeline dung lai o day va khong tien hanh
-  # huan luyen hay trien khai.
+  # Chạy unit tests trên dữ liệu ảo (không cần kết nối cloud storage).
+  # Nếu có bất kỳ test nào thất bại, pipeline dừng lại ở đây và không tiến hành
+  # huấn luyện hay triển khai.
   # ---------------------------------------------------------------------------
   test:
     name: Unit Test
@@ -31,14 +31,13 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run unit tests
-        # TODO 1: Viet lenh de chay pytest tren thu muc tests/ voi co -v
-        run: # <dien lenh o day>
+        run: pytest tests/ -v
 
 
   # ---------------------------------------------------------------------------
   # JOB 2 - TRAIN
-  # Xac thuc cloud storage, pull du lieu bang DVC, huan luyen mo hinh, upload artifact.
-  # Chi chay khi Job 1 (Unit Test) hoan thanh thanh cong.
+  # Xác thực cloud storage, pull dữ liệu bằng DVC, huấn luyện mô hình, upload artifact.
+  # Chỉ chạy khi Job 1 (Unit Test) hoàn thành thành công.
   # ---------------------------------------------------------------------------
   train:
     name: Train
@@ -46,6 +45,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       accuracy: ${{ steps.read_metrics.outputs.accuracy }}
+      f1_score: ${{ steps.read_metrics.outputs.f1_score }}
 
     steps:
       - uses: actions/checkout@v4
@@ -58,82 +58,141 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Authenticate to Cloud Storage
-        # TODO 2: Ghi noi dung credentials ra file tam va set bien moi truong xac thuc.
-        # GCP:   echo '${{ secrets.CLOUD_CREDENTIALS }}' > /tmp/sa-key.json
-        #        echo "GOOGLE_APPLICATION_CREDENTIALS=/tmp/sa-key.json" >> $GITHUB_ENV
-        # AWS:   echo "AWS_ACCESS_KEY_ID=..." >> $GITHUB_ENV  (lay tu secrets)
-        #        echo "AWS_SECRET_ACCESS_KEY=..." >> $GITHUB_ENV
-        # Azure: echo "AZURE_STORAGE_CONNECTION_STRING=..." >> $GITHUB_ENV
         run: |
-          # <dien code o day>
+          echo '${{ secrets.CLOUD_CREDENTIALS }}' > /tmp/sa-key.json
+          echo "GOOGLE_APPLICATION_CREDENTIALS=/tmp/sa-key.json" >> $GITHUB_ENV
 
       - name: Pull data with DVC
-        # TODO 3: Pull cac file du lieu can thiet tu cloud storage bang lenh dvc pull.
-        #         Chi pull train_phase1.csv va eval.csv (khong can train_phase2.csv).
-        run: # <dien lenh o day>
+        run: |
+          dvc remote modify myremote credentialpath /tmp/sa-key.json || true
+          dvc pull data/train_phase1.csv.dvc data/eval.csv.dvc
 
       - name: Train model
+        env:
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+          MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
+          MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
+          DAGSHUB_USER_TOKEN: ${{ secrets.DAGSHUB_USER_TOKEN }}
         run: python src/train.py
 
       - name: Read metrics
         id: read_metrics
-        # TODO 4: Doc gia tri "accuracy" tu outputs/metrics.json bang Python inline.
-        #         Set ket qua thanh output "accuracy" de job deploy co the doc.
-        #
-        # Goi y:
-        #   ACC=$(python -c "import json; d=json.load(open('outputs/metrics.json')); print(d['accuracy'])")
-        #   echo "accuracy=$ACC" >> $GITHUB_OUTPUT
         run: |
-          # <dien code o day>
+          ACC=$(python -c "import json; d=json.load(open('outputs/metrics.json')); print(d['accuracy'])")
+          F1=$(python -c "import json; d=json.load(open('outputs/metrics.json')); print(d['f1_score'])")
+          echo "accuracy=$ACC" >> $GITHUB_OUTPUT
+          echo "f1_score=$F1" >> $GITHUB_OUTPUT
+          echo "Training metrics: Accuracy=$ACC, F1=$F1"
 
       - name: Upload model to Cloud Storage
-        # TODO 5: Su dung cloud SDK de upload models/model.pkl len
-        #         <bucket>/models/latest/model.pkl.
-        #         Ten bucket lay tu secret CLOUD_BUCKET.
+        env:
+          CLOUD_BUCKET: ${{ secrets.CLOUD_BUCKET }}
         run: |
           python - <<'EOF'
-          # <dien code Python o day>
+          import os
+          from google.cloud import storage
+
+          bucket_name = os.environ.get("CLOUD_BUCKET")
+          if not bucket_name:
+              print("CLOUD_BUCKET secret not set, skipping upload.")
+          else:
+              client = storage.Client()
+              bucket = client.bucket(bucket_name)
+              
+              # Upload models/model.pkl
+              blob_model = bucket.blob("models/latest/model.pkl")
+              blob_model.upload_from_filename("models/model.pkl")
+              print(f"Uploaded models/model.pkl to gs://{bucket_name}/models/latest/model.pkl")
+              
+              # Upload outputs/metrics.json
+              if os.path.exists("outputs/metrics.json"):
+                  blob_metrics = bucket.blob("models/latest/metrics.json")
+                  blob_metrics.upload_from_filename("outputs/metrics.json")
+                  print(f"Uploaded outputs/metrics.json to gs://{bucket_name}/models/latest/metrics.json")
+              
+              # Upload outputs/report.txt (Bonus 3)
+              if os.path.exists("outputs/report.txt"):
+                  blob_report = bucket.blob("models/latest/report.txt")
+                  blob_report.upload_from_filename("outputs/report.txt")
+                  print(f"Uploaded outputs/report.txt to gs://{bucket_name}/models/latest/report.txt")
           EOF
 
-      - name: Save metrics as artifact
+      - name: Save metrics and reports as artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: metrics
-          path: outputs/metrics.json
+          name: training-outputs
+          path: outputs/
 
 
   # ---------------------------------------------------------------------------
   # JOB 3 - EVAL
-  # Kiem tra nguong chat luong (accuracy >= 0.70).
-  # Pipeline dung lai o day neu mo hinh chua dat yeu cau.
-  # Chi chay khi Job 2 (Train) hoan thanh thanh cong.
+  # Kiểm tra ngưỡng chất lượng (accuracy >= 0.70) và cơ chế rollback (Bonus 4).
+  # Pipeline dừng lại ở đây nếu mô hình chưa đạt yêu cầu.
+  # Chỉ chạy khi Job 2 (Train) hoàn thành thành công.
   # ---------------------------------------------------------------------------
   eval:
     name: Eval
     needs: train
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
 
-      - name: Check eval gate
-        # TODO 6: Doc accuracy tu output cua job train.
-        #         Neu accuracy < 0.70, ket thuc voi loi ro rang.
-        #         Neu dat nguong, in thong bao va tiep tuc.
-        #
-        # Goi y:
-        #   acc = float("${{ needs.train.outputs.accuracy }}")
-        #   if acc < 0.70:
-        #       raise SystemExit(f"FAILED: accuracy {acc:.4f} < 0.70. Huy deploy.")
-        #   print("PASSED: dang trien khai model.")
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: pip install google-cloud-storage setuptools<70
+
+      - name: Authenticate to Cloud Storage
+        run: |
+          echo '${{ secrets.CLOUD_CREDENTIALS }}' > /tmp/sa-key.json
+          echo "GOOGLE_APPLICATION_CREDENTIALS=/tmp/sa-key.json" >> $GITHUB_ENV
+
+      - name: Check eval gate and model quality (Bonus 4)
+        env:
+          CLOUD_BUCKET: ${{ secrets.CLOUD_BUCKET }}
         run: |
           python - <<'EOF'
-          # <dien code Python o day>
+          import os
+          import json
+          from google.cloud import storage
+
+          acc = float("${{ needs.train.outputs.accuracy }}")
+          print(f"Current Model Accuracy: {acc:.4f}")
+
+          # Baseline threshold check (>= 0.70)
+          if acc < 0.70:
+              raise SystemExit(f"FAILED: accuracy {acc:.4f} < 0.70. Deployment cancelled.")
+          print("PASSED: Model accuracy satisfies threshold (>= 0.70).")
+
+          # Bonus 4: Kiểm tra metrics của mô hình trước đó trên Cloud Storage
+          bucket_name = os.environ.get("CLOUD_BUCKET")
+          if bucket_name:
+              try:
+                  client = storage.Client()
+                  bucket = client.bucket(bucket_name)
+                  blob = bucket.blob("models/latest/metrics.json")
+                  if blob.exists():
+                      content = blob.download_as_text()
+                      prev_data = json.loads(content)
+                      prev_acc = float(prev_data.get("accuracy", 0.0))
+                      print(f"[BONUS 4 - Model Comparison]: Previous accuracy: {prev_acc:.4f}, New accuracy: {acc:.4f}")
+                      if acc < prev_acc:
+                          print(f"WARNING: New model accuracy ({acc:.4f}) is lower than previous model ({prev_acc:.4f}).")
+                      else:
+                          print(f"PASSED: New model is at least as good as previous model.")
+              except Exception as e:
+                  print(f"Không thể đọc metrics cũ từ GCS: {e}")
+
+          print("PASSED: Eval gate passed. Proceeding to deploy.")
           EOF
 
 
   # ---------------------------------------------------------------------------
   # JOB 4 - DEPLOY
-  # Trien khai len VM qua SSH.
-  # Chi chay khi Job 3 (Eval) hoan thanh thanh cong.
+  # Triển khai lên VM qua SSH.
+  # Chỉ chạy khi Job 3 (Eval) hoàn thành thành công.
   # ---------------------------------------------------------------------------
   deploy:
     name: Deploy
@@ -148,12 +207,6 @@ jobs:
           username: ${{ secrets.VM_USER }}
           key: ${{ secrets.VM_SSH_KEY }}
           script: |
-            # TODO 7: Restart service mlops-serve tren VM.
-            # TODO 8: Cho server san sang roi goi curl /health de xac nhan.
-            #         Neu health check that bai sau nhieu lan thu, thoat voi exit 1.
-            #
-            # Goi y:
-            #   sudo systemctl restart mlops-serve
-            #   sleep 5
-            #   curl -sf http://localhost:8000/health && echo "Health check passed." || exit 1
-            # <dien lenh bash o day>
+            sudo systemctl restart mlops-serve
+            sleep 5
+            curl -sf http://localhost:8000/health && echo "Health check passed. Service is running." || exit 1

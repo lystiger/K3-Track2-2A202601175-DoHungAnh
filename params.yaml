@@ -1,5 +1,5 @@
-# Sieu tham so cho mo hinh RandomForestClassifier
-# Thay doi cac gia tri nay giua cac lan chay de thi nghiem (Buoc 1)
-n_estimators: 100
-max_depth: 5
+# Siêu tham số tối ưu cho mô hình RandomForestClassifier (Bước 1 & Bước 2)
+model_type: random_forest
+n_estimators: 200
+max_depth: 20
 min_samples_split: 2

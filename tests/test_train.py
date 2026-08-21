@@ -14,53 +14,49 @@ FEATURE_NAMES = [
 
 def _make_temp_data(tmp_path):
     """
-    Tao dataset nho voi cung schema Wine Quality de su dung trong test.
+    Tạo dataset nhỏ với cùng schema Wine Quality để sử dụng trong test.
 
-    pytest cung cap `tmp_path` la mot thu muc tam thoi, tu dong xoa sau khi test ket thuc.
-    Ham nay dung du lieu ngau nhien nen khong can ket noi GCS hay tai file CSV thuc.
+    pytest cung cấp `tmp_path` là một thư mục tạm thời, tự động xóa sau khi test kết thúc.
+    Hàm này dùng dữ liệu ngẫu nhiên nên không cần kết nối GCS hay tải file CSV thực.
     """
     rng = np.random.default_rng(0)
     n = 200
 
-    # TODO 1: Tao mang X co kich thuoc (n, len(FEATURE_NAMES)) voi gia tri [0, 1)
-    # X = rng.random((n, len(FEATURE_NAMES)))
+    # Tạo mảng X có kích thước (n, len(FEATURE_NAMES)) với giá trị [0, 1)
+    X = rng.random((n, len(FEATURE_NAMES)))
 
-    # TODO 2: Tao mang y gom n phan tu nguyen ngau nhien trong [0, 3)
-    # y = rng.integers(0, 3, size=n)
+    # Tạo mảng y gồm n phần tử nguyên ngẫu nhiên trong [0, 3)
+    y = rng.integers(0, 3, size=n)
 
-    # TODO 3: Xay dung DataFrame, them cot "target"
-    # df = pd.DataFrame(X, columns=FEATURE_NAMES)
-    # df["target"] = y
+    # Xây dựng DataFrame, thêm cột "target"
+    df = pd.DataFrame(X, columns=FEATURE_NAMES)
+    df["target"] = y
 
-    # TODO 4: Luu 160 dong dau lam tap huan luyen, 40 dong cuoi lam tap danh gia
-    # train_path = str(tmp_path / "train.csv")
-    # eval_path  = str(tmp_path / "eval.csv")
-    # df.iloc[:160].to_csv(train_path, index=False)
-    # df.iloc[160:].to_csv(eval_path,  index=False)
+    # Lưu 160 dòng đầu làm tập huấn luyện, 40 dòng cuối làm tập đánh giá
+    train_path = str(tmp_path / "train.csv")
+    eval_path = str(tmp_path / "eval.csv")
+    df.iloc[:160].to_csv(train_path, index=False)
+    df.iloc[160:].to_csv(eval_path, index=False)
 
-    # TODO 5: Tra ve (train_path, eval_path)
-    # return train_path, eval_path
-
-    pass  # xoa dong nay sau khi hoan thanh tat ca TODO ben tren
+    return train_path, eval_path
 
 
 def test_train_returns_float(tmp_path):
-    """Kiem tra ham train() tra ve mot so thuc nam trong [0.0, 1.0]."""
+    """Kiểm tra hàm train() trả về một số thực nằm trong [0.0, 1.0]."""
     train_path, eval_path = _make_temp_data(tmp_path)
 
-    # TODO 6: Goi ham train() voi sieu tham so nho (n_estimators=10, max_depth=3)
-    # va cac duong dan file vua tao
-    # acc = train({"n_estimators": 10, "max_depth": 3}, ...)
+    acc = train(
+        {"n_estimators": 10, "max_depth": 3},
+        data_path=train_path,
+        eval_path=eval_path,
+    )
 
-    # TODO 7: Kiem tra ket qua
-    # assert isinstance(acc, float)
-    # assert 0.0 <= acc <= 1.0
-
-    pass  # xoa dong nay sau khi hoan thanh tat ca TODO ben tren
+    assert isinstance(acc, (float, np.floating))
+    assert 0.0 <= acc <= 1.0
 
 
 def test_metrics_file_created(tmp_path):
-    """Kiem tra file outputs/metrics.json duoc tao sau khi huan luyen."""
+    """Kiểm tra file outputs/metrics.json được tạo sau khi huấn luyện."""
     train_path, eval_path = _make_temp_data(tmp_path)
     train(
         {"n_estimators": 10, "max_depth": 3},
@@ -68,18 +64,15 @@ def test_metrics_file_created(tmp_path):
         eval_path=eval_path,
     )
 
-    # TODO 8: Kiem tra file ton tai va noi dung dung dinh dang
-    # assert os.path.exists("outputs/metrics.json")
-    # with open("outputs/metrics.json") as f:
-    #     metrics = json.load(f)
-    # assert "accuracy" in metrics
-    # assert "f1_score" in metrics
-
-    pass  # xoa dong nay sau khi hoan thanh tat ca TODO ben tren
+    assert os.path.exists("outputs/metrics.json")
+    with open("outputs/metrics.json", "r", encoding="utf-8") as f:
+        metrics = json.load(f)
+    assert "accuracy" in metrics
+    assert "f1_score" in metrics
 
 
 def test_model_file_created(tmp_path):
-    """Kiem tra file models/model.pkl duoc tao sau khi huan luyen."""
+    """Kiểm tra file models/model.pkl được tạo sau khi huấn luyện."""
     train_path, eval_path = _make_temp_data(tmp_path)
     train(
         {"n_estimators": 10, "max_depth": 3},
@@ -87,7 +80,55 @@ def test_model_file_created(tmp_path):
         eval_path=eval_path,
     )
 
-    # TODO 9: Kiem tra file model ton tai
-    # assert os.path.exists("models/model.pkl")
+    assert os.path.exists("models/model.pkl")
 
-    pass  # xoa dong nay sau khi hoan thanh tat ca TODO ben tren
+
+def test_multiple_algorithms(tmp_path):
+    """Kiểm tra hỗ trợ nhiều thuật toán khác nhau (Bonus 2)."""
+    train_path, eval_path = _make_temp_data(tmp_path)
+
+    # Gradient Boosting
+    acc_gb = train(
+        {"model_type": "gradient_boosting", "n_estimators": 10, "max_depth": 3},
+        data_path=train_path,
+        eval_path=eval_path,
+    )
+    assert isinstance(acc_gb, (float, np.floating))
+    assert 0.0 <= acc_gb <= 1.0
+
+    # Logistic Regression
+    acc_lr = train(
+        {"model_type": "logistic_regression", "C": 1.0},
+        data_path=train_path,
+        eval_path=eval_path,
+    )
+    assert isinstance(acc_lr, (float, np.floating))
+    assert 0.0 <= acc_lr <= 1.0
+
+
+def test_serve_endpoints():
+    """Kiểm tra các endpoints của FastAPI serving (GET /health và POST /predict)."""
+    from fastapi.testclient import TestClient
+    from src.serve import app
+
+    client = TestClient(app)
+
+    # Test /health
+    res_health = client.get("/health")
+    assert res_health.status_code == 200
+    assert res_health.json() == {"status": "ok"}
+
+    # Test /predict valid
+    sample_features = [7.4, 0.70, 0.00, 1.9, 0.076, 11.0, 34.0, 0.9978, 3.51, 0.56, 9.4, 0.0]
+    res_pred = client.post("/predict", json={"features": sample_features})
+    assert res_pred.status_code == 200
+    data = res_pred.json()
+    assert "prediction" in data
+    assert data["prediction"] in [0, 1, 2]
+    assert data["label"] in ["thap", "trung_binh", "cao"]
+
+    # Test /predict invalid feature length
+    res_bad = client.post("/predict", json={"features": [1.0, 2.0]})
+    assert res_bad.status_code == 400
+
+
